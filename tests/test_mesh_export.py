@@ -4,12 +4,13 @@ import pytest
 from anomaly_triage.mesh import export
 
 
-def telemetry(services=("postgres", "product-catalog", "payment")):
+def telemetry(services=("postgres", "product-catalog", "payment"), metrics=("latency_p95_ms",)):
     index = pd.date_range("2026-09-01T00:00:00Z", periods=10, freq="15s")
     rows = [
-        {"timestamp": ts, "service": svc, "metric": "latency_p95_ms", "value": 10.0}
+        {"timestamp": ts, "service": svc, "metric": metric, "value": 10.0}
         for ts in index
         for svc in services
+        for metric in metrics
     ]
     return pd.DataFrame(rows)
 
@@ -96,3 +97,45 @@ def test_every_metric_has_a_query():
     from anomaly_triage.sim.metrics import METRICS
 
     assert set(export.QUERIES) == set(METRICS)
+
+
+ALL_METRICS = ("latency_p95_ms", "error_rate", "cpu_pct", "mem_mb", "request_rate_rps")
+
+
+def test_affected_metrics_matches_the_simulator_profiles():
+    origin, callers = export.affected_metrics("cpu_saturation")
+    assert set(origin) == {"cpu_pct", "latency_p95_ms", "error_rate"}
+    # CPU is local to the process that is saturated
+    assert "cpu_pct" not in callers
+
+
+def test_memory_leak_propagates_latency_only():
+    origin, callers = export.affected_metrics("memory_leak")
+    assert "mem_mb" in origin
+    assert callers == ("latency_p95_ms",)
+
+
+def test_label_does_not_flag_metrics_the_fault_never_touches():
+    data = telemetry(("payment", "checkout"), ALL_METRICS)
+    record = incident(2, 6, ["payment", "checkout"])
+    record["kind"] = "error_spike"
+    record["root_service"] = "payment"
+    labelled = export.label(data, pd.DataFrame([record]))
+
+    flagged = labelled[labelled.is_anomalous]
+    assert set(flagged["metric"]) == {"error_rate", "latency_p95_ms"}
+    assert "mem_mb" not in set(flagged["metric"])
+
+
+def test_label_flags_cpu_at_the_origin_but_not_at_callers():
+    data = telemetry(("payment", "checkout"), ALL_METRICS)
+    record = incident(2, 6, ["payment", "checkout"])
+    record["kind"] = "cpu_saturation"
+    record["root_service"] = "payment"
+    labelled = export.label(data, pd.DataFrame([record]))
+
+    flagged = labelled[labelled.is_anomalous]
+    origin_metrics = set(flagged[flagged.service == "payment"]["metric"])
+    caller_metrics = set(flagged[flagged.service == "checkout"]["metric"])
+    assert "cpu_pct" in origin_metrics
+    assert "cpu_pct" not in caller_metrics

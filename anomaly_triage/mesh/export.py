@@ -15,6 +15,9 @@ from urllib.request import urlopen
 
 import pandas as pd
 
+from ..sim.faults import FaultKind, origin_profile
+from ..sim.inject import PROPAGATING_METRICS
+
 DEFAULT_PROMETHEUS = "http://localhost:9090"
 
 # Metric name -> PromQL. Names and units deliberately match metrics.METRICS.
@@ -99,6 +102,19 @@ def fetch(
     return frame.sort_values(["timestamp", "service", "metric"], ignore_index=True)
 
 
+def affected_metrics(kind: str) -> tuple[tuple[str, ...], tuple[str, ...]]:
+    """Which metrics a fault kind disturbs, at the origin and at its callers.
+
+    Derived from the same profiles the simulator uses, so a fault labels the
+    same metrics whichever source produced the telemetry. Labelling every
+    metric of an affected service would mark memory as anomalous during an
+    error spike and quietly inflate the false-negative count.
+    """
+    at_origin = tuple(origin_profile(FaultKind(kind), 1, 1.0))
+    at_callers = tuple(m for m in PROPAGATING_METRICS if m in at_origin)
+    return at_origin, at_callers
+
+
 def label(
     telemetry: pd.DataFrame,
     incidents: pd.DataFrame,
@@ -113,12 +129,17 @@ def label(
         affected = incident[affected_column]
         if isinstance(affected, str):
             affected = [s for s in affected.split(",") if s]
-        window = (
-            labelled["timestamp"].between(incident["start"], incident["end"])
-            & labelled["service"].isin(affected)
+        origin_metrics, caller_metrics = affected_metrics(incident["kind"])
+        root = incident["root_service"]
+        callers = [s for s in affected if s != root]
+
+        in_window = labelled["timestamp"].between(incident["start"], incident["end"])
+        touched = in_window & (
+            ((labelled["service"] == root) & labelled["metric"].isin(origin_metrics))
+            | (labelled["service"].isin(callers) & labelled["metric"].isin(caller_metrics))
         )
-        unclaimed = window & (labelled["incident_id"] == "")
-        labelled.loc[window, "is_anomalous"] = True
+        unclaimed = touched & (labelled["incident_id"] == "")
+        labelled.loc[touched, "is_anomalous"] = True
         labelled.loc[unclaimed, "incident_id"] = incident["incident_id"]
 
     return labelled
