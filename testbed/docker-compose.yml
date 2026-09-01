@@ -1,0 +1,85 @@
+# The mesh mirrors the simulator's topology and service names, so telemetry
+# from either source lands in the same schema.
+
+x-service: &service
+  build: ./service
+  restart: unless-stopped
+  environment: &env
+    PORT: "8000"
+    BASE_ERROR_RATE: "0.002"
+
+services:
+  frontend:
+    <<: *service
+    ports: ["8080:8000"]
+    environment:
+      <<: *env
+      SERVICE_NAME: frontend
+      DEPENDS_ON: checkout,product-catalog,recommendation,cart
+      BASE_LATENCY_MS: "30"
+
+  checkout:
+    <<: *service
+    environment:
+      <<: *env
+      SERVICE_NAME: checkout
+      DEPENDS_ON: cart,payment
+      BASE_LATENCY_MS: "45"
+
+  cart:
+    <<: *service
+    environment:
+      <<: *env
+      SERVICE_NAME: cart
+      DEPENDS_ON: redis
+      BASE_LATENCY_MS: "12"
+
+  product-catalog:
+    <<: *service
+    environment:
+      <<: *env
+      SERVICE_NAME: product-catalog
+      DEPENDS_ON: postgres
+      BASE_LATENCY_MS: "18"
+
+  recommendation:
+    <<: *service
+    environment:
+      <<: *env
+      SERVICE_NAME: recommendation
+      DEPENDS_ON: product-catalog
+      BASE_LATENCY_MS: "35"
+
+  payment:
+    <<: *service
+    environment:
+      <<: *env
+      SERVICE_NAME: payment
+      DEPENDS_ON: ""
+      BASE_LATENCY_MS: "60"
+
+  redis:
+    <<: *service
+    environment:
+      <<: *env
+      SERVICE_NAME: redis
+      DEPENDS_ON: ""
+      BASE_LATENCY_MS: "3"
+
+  postgres:
+    <<: *service
+    environment:
+      <<: *env
+      SERVICE_NAME: postgres
+      DEPENDS_ON: ""
+      BASE_LATENCY_MS: "6"
+
+  prometheus:
+    image: prom/prometheus:v2.53.0
+    restart: unless-stopped
+    ports: ["9090:9090"]
+    volumes:
+      - ./prometheus.yml:/etc/prometheus/prometheus.yml:ro
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.retention.time=30d

@@ -1,0 +1,18 @@
+# 5s scrapes: incidents in this testbed last minutes, not hours, so the
+# detector needs enough samples inside a fault window to have an opinion.
+global:
+  scrape_interval: 5s
+  evaluation_interval: 5s
+
+scrape_configs:
+  - job_name: mesh
+    static_configs:
+      - targets:
+          - frontend:8000
+          - checkout:8000
+          - cart:8000
+          - product-catalog:8000
+          - recommendation:8000
+          - payment:8000
+          - redis:8000
+          - postgres:8000
