@@ -43,9 +43,9 @@ Phase 0 of 6 — the labelled data generator.
 
 | Phase | | Status |
 |---|---|---|
-| 0 | Testbed and labelled fault data | in progress |
-| 0.5 | Containerised mesh with real faults | in progress |
-| 1 | Ingestion, storage, seasonal baselines | in progress |
+| 0 | Testbed and labelled fault data | ipr |
+| 0.5 | Containerised mesh with real faults | ipr |
+| 1 | Ingestion, storage, seasonal baselines | ipr |
 | 2 | Quantile forecasting and eval harness | |
 | 3 | FDR control, extreme-value thresholds, changepoints | |
 | 4 | Trace topology and root-cause ranking | |
