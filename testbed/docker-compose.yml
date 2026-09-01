@@ -20,6 +20,7 @@ services:
 
   checkout:
     <<: *service
+    ports: ["8001:8000"]
     environment:
       <<: *env
       SERVICE_NAME: checkout
@@ -28,6 +29,7 @@ services:
 
   cart:
     <<: *service
+    ports: ["8002:8000"]
     environment:
       <<: *env
       SERVICE_NAME: cart
@@ -36,6 +38,7 @@ services:
 
   product-catalog:
     <<: *service
+    ports: ["8003:8000"]
     environment:
       <<: *env
       SERVICE_NAME: product-catalog
@@ -44,6 +47,7 @@ services:
 
   recommendation:
     <<: *service
+    ports: ["8004:8000"]
     environment:
       <<: *env
       SERVICE_NAME: recommendation
@@ -52,6 +56,7 @@ services:
 
   payment:
     <<: *service
+    ports: ["8005:8000"]
     environment:
       <<: *env
       SERVICE_NAME: payment
@@ -60,6 +65,7 @@ services:
 
   redis:
     <<: *service
+    ports: ["8006:8000"]
     environment:
       <<: *env
       SERVICE_NAME: redis
@@ -68,6 +74,7 @@ services:
 
   postgres:
     <<: *service
+    ports: ["8007:8000"]
     environment:
       <<: *env
       SERVICE_NAME: postgres
