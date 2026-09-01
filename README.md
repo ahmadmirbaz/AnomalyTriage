@@ -23,6 +23,7 @@ Phase 0 of 6 — the labelled data generator.
 | Phase | | Status |
 |---|---|---|
 | 0 | Testbed and labelled fault data | in progress |
+| 0.5 | Containerised mesh with real faults | in progress |
 | 1 | Ingestion, storage, seasonal baselines | |
 | 2 | Quantile forecasting and eval harness | |
 | 3 | FDR control, extreme-value thresholds, changepoints | |
@@ -66,6 +67,49 @@ error rate travel upstream; CPU and memory do not. That asymmetry is the
 strongest localisation signal in the data, and the phase 4 ranker is meant
 to find it.
 
+## The containerised mesh
+
+The simulator is fast and its labels are exact, but its metrics are drawn
+from a model rather than measured. The mesh closes that gap: eight
+instrumented Flask services behind Prometheus, wired into the same topology
+and scraped every five seconds.
+
+```bash
+docker compose -f testbed/docker-compose.yml up -d --build
+python -m anomaly_triage.mesh.orchestrate --minutes 45 --out data/mesh-01
+```
+
+Faults here are **real**, not modelled. `cpu_saturation` duty-cycles a busy
+loop, `memory_leak` genuinely allocates, `latency_injection` sleeps in the
+handler, `dependency_failure` refuses calls. The CPU and memory gauges then
+report what the process is actually doing.
+
+Injecting `cpu_saturation` at magnitude 0.9 into `postgres`:
+
+| service | hops | CPU | p95 latency |
+|---|---|---|---|
+| postgres | origin | 4.5% → 86.9% | 9.8 → 41.6 ms (4.3x) |
+| product-catalog | 1 | — | 48.4 → 96.6 ms (2.0x) |
+| recommendation | 2 | — | 97.5 → 227.6 ms (2.3x) |
+| frontend | 2 | — | 487 → 494 ms (1.01x) |
+| payment | unrelated | — | unchanged |
+
+The frontend barely moves, and that is the interesting part. Its p95 is
+dominated by the slower `checkout -> payment` branch, so a 48 ms bump on the
+catalog branch disappears into it. An incident that is plainly visible three
+hops down is invisible at the edge — which is the argument for per-service
+detection and graph localisation rather than watching the front door.
+
+Reproduce with:
+
+```bash
+python testbed/verify_propagation.py --service postgres --kind cpu_saturation
+```
+
+Both sources emit the identical schema — `(timestamp, service, metric,
+value)` over the same five metric names — so nothing downstream knows or
+cares which one it is reading.
+
 ## Layout
 
 ```
@@ -76,6 +120,17 @@ anomaly_triage/sim/
   inject.py     propagation, attenuation, ground-truth labelling
   schedule.py   randomised schedules with a fault-free warm-up
   run.py        CLI producing a reproducible labelled run
+
+anomaly_triage/mesh/
+  client.py     fault injection against the running containers
+  export.py     Prometheus -> the simulator's schema
+  orchestrate.py  drives a labelled run end to end
+
+testbed/
+  service/      one instrumented service, configured by environment
+  docker-compose.yml  the eight-service mesh plus Prometheus
+  loadgen.py    Poisson traffic on a compressed diurnal cycle
+  verify_propagation.py  smoke test: are faults real, do they propagate
 ```
 
 ## Development
