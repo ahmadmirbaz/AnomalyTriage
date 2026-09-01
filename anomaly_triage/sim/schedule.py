@@ -44,6 +44,9 @@ class ScheduleConfig:
     warmup_hours: float = 6.0
     min_gap_minutes: float = 20.0
     magnitude_range: tuple[float, float] = (0.35, 1.0)
+    # Mesh runs last minutes rather than days, so the nominal durations
+    # below have to be compressed to fit inside one.
+    duration_scale: float = 1.0
     max_permanent: int = 2
     kind_weights: dict[FaultKind, float] = field(default_factory=lambda: dict(_KIND_WEIGHTS))
 
@@ -97,7 +100,7 @@ def schedule_faults(
         # Snap to the sample grid; a fault that ends between two scrapes is
         # not something the data could ever express.
         step = pd.Timedelta(seconds=step_seconds)
-        raw = pd.Timedelta(minutes=float(rng.uniform(low, high)))
+        raw = pd.Timedelta(minutes=float(rng.uniform(low, high)) * config.duration_scale)
         duration = max(step, raw.round(step))
         if not kind.is_permanent and start + duration > index[-1]:
             continue
