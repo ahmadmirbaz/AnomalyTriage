@@ -5,11 +5,32 @@ Watches thousands of service metrics, and when something breaks, tells you which
 ## Why
 
 A platform emitting 5,000 metrics on a one-minute cadence, alerting on a
-two-sided 3σ band, fires roughly **19,000 false alerts a day** while
-perfectly healthy. Nothing is misconfigured — the error rate was specified
-per metric, but the on-call engineer receives the union of all of them.
-Teams respond by widening thresholds until the noise stops, which is how
-real incidents get missed.
+two-sided 3-sigma band, drowns its on-call engineer in false alarms while
+the fleet is perfectly healthy. The textbook figure is 0.27% of samples.
+The measured figure is worse:
+
+```
+14 fault-free days, 60s scrapes, 4h rolling window
+
+    k    observed    gaussian  inflation       alerts/day, 5000 series
+  2.0     9.243%     4.550%       2.0x                       665,518
+  2.5     2.900%     1.240%       2.3x                       208,792
+  3.0     0.881%     0.270%       3.3x                        63,446
+  3.5     0.303%     0.046%       6.5x                        21,839
+```
+
+Every alert counted there is false by construction — nothing is wrong.
+Reproduce with `python -m anomaly_triage.detect.measure_baseline`.
+
+Two things are worth noticing. The three-sigma rule fires **3.3x** more
+often than the Gaussian calculation promises, because real telemetry is
+autocorrelated and heavy-tailed rather than independent and normal. And the
+inflation *grows* as you push further out — 6.5x by 3.5 sigma — so tightening
+the threshold buys less than it appears to. Teams widen thresholds until the
+noise stops, which is how real incidents get missed.
+
+Nothing is misconfigured here. The error rate was specified per metric, but
+the engineer receives the union of all of them.
 
 This project treats detection as what it actually is: a very large
 simultaneous hypothesis test. Alert volume then becomes a **false discovery
@@ -24,7 +45,7 @@ Phase 0 of 6 — the labelled data generator.
 |---|---|---|
 | 0 | Testbed and labelled fault data | in progress |
 | 0.5 | Containerised mesh with real faults | in progress |
-| 1 | Ingestion, storage, seasonal baselines | |
+| 1 | Ingestion, storage, seasonal baselines | in progress |
 | 2 | Quantile forecasting and eval harness | |
 | 3 | FDR control, extreme-value thresholds, changepoints | |
 | 4 | Trace topology and root-cause ranking | |
