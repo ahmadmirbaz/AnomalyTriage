@@ -57,6 +57,7 @@ def schedule_faults(
     config = config or ScheduleConfig()
     rng = np.random.default_rng(config.seed)
 
+    step_seconds = int((index[1] - index[0]).total_seconds()) if len(index) > 1 else 1
     span_hours = (index[-1] - index[0]).total_seconds() / 3600
     usable_hours = span_hours - config.warmup_hours
     if usable_hours <= 0:
@@ -93,7 +94,11 @@ def schedule_faults(
             continue
 
         low, high = _DURATION_MINUTES[kind]
-        duration = pd.Timedelta(minutes=float(rng.uniform(low, high)))
+        # Snap to the sample grid; a fault that ends between two scrapes is
+        # not something the data could ever express.
+        step = pd.Timedelta(seconds=step_seconds)
+        raw = pd.Timedelta(minutes=float(rng.uniform(low, high)))
+        duration = max(step, raw.round(step))
         if not kind.is_permanent and start + duration > index[-1]:
             continue
 
