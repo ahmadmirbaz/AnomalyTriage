@@ -22,6 +22,7 @@ import argparse
 import time
 from pathlib import Path
 
+import numpy as np
 import pandas as pd
 
 from .baseline import EWMA, SeasonalNaive, step_seconds, to_wide
@@ -87,10 +88,27 @@ def main(argv: list[str] | None = None) -> int:
         "ewma": EWMA().predict(wide).loc[test.index],
     }
 
-    print("accuracy - median pinball loss, lower is better")
-    print(f"  {'quantile forecaster':<22}{pinball_loss(test, predicted[0.5], 0.5):>12.4f}")
-    for name, prediction in baselines.items():
-        print(f"  {name:<22}{pinball_loss(test, prediction, 0.5):>12.4f}")
+    print("accuracy - median pinball loss per metric, scaled by that metric's")
+    print("spread so mem_mb does not drown out error_rate\n")
+    print(f"  {'metric':<18}{'forecaster':>12}{'seasonal':>12}{'ewma':>12}")
+    metrics = sorted({c[1] for c in test.columns})
+    for metric in metrics:
+        cols = [c for c in test.columns if c[1] == metric]
+        actual = test[cols]
+        # Scale by the metric's own variability, so each metric contributes
+        # comparably instead of in proportion to its units.
+        spread = float(np.nanstd(actual.to_numpy(dtype=float))) or 1.0
+        row = pinball_loss(actual, predicted[0.5][cols], 0.5) / spread
+        seasonal = pinball_loss(actual, baselines["seasonal-naive"][cols], 0.5) / spread
+        ewma = pinball_loss(actual, baselines["ewma"][cols], 0.5) / spread
+        print(f"  {metric:<18}{row:>12.4f}{seasonal:>12.4f}{ewma:>12.4f}")
+    print(f"\n  {'pooled (unscaled)':<18}"
+          f"{pinball_loss(test, predicted[0.5], 0.5):>12.4f}"
+          f"{pinball_loss(test, baselines['seasonal-naive'], 0.5):>12.4f}"
+          f"{pinball_loss(test, baselines['ewma'], 0.5):>12.4f}")
+    print("\n  The baselines emit a point and nothing else. Beating them on the")
+    print("  median is worth little if the interval around it is not honest,")
+    print("  which is what the next two blocks measure and they cannot.")
 
     print("\ncalibration - interval coverage, clean points only")
     for lo, hi in ((0.05, 0.95), (0.01, 0.99)):
