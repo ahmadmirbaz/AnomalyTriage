@@ -1,5 +1,6 @@
 numpy>=1.26
 pandas>=2.0
+scikit-learn>=1.4
 
 # dev
 pytest>=7.4
