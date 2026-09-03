@@ -11,6 +11,13 @@ booster for two reasons: it takes NaN features natively, which matters because
 every lag column has a ragged head, and it fits 60 series in a minute rather
 than an afternoon.
 
+Targets are *changes*, not levels. A tree can only ever predict a value it saw
+while training, and memory climbs steadily under a leak - so a level-predicting
+model walks off the end of its own training range exactly when the incident
+starts, and a plain exponential average beats it. Predicting the step from the
+last observation keeps the target stationary and hands extrapolation back to
+the anchor, which needs no learning to follow a drift.
+
 The model is fit only on rows known to be fault-free. A forecaster trained
 through its own incidents learns to expect them, and the anomaly it was built
 to surface flattens into the baseline.
@@ -39,11 +46,23 @@ class QuantileForecaster:
     max_depth: int | None = 6
     min_samples_leaf: int = 40
     random_state: int = 0
+    # Predict y - y[t-1] and add the anchor back, rather than predicting y.
+    residual_target: bool = True
 
     models_: dict[tuple, dict[float, HistGradientBoostingRegressor]] = field(
         default_factory=dict, init=False, repr=False
     )
     columns_: list = field(default_factory=list, init=False, repr=False)
+
+    def _anchor(self, series: pd.Series) -> pd.Series:
+        """What the prediction is measured against.
+
+        The last observation. Zero when predicting levels directly, so the
+        rest of the code does not need to branch.
+        """
+        if not self.residual_target:
+            return pd.Series(0.0, index=series.index)
+        return series.shift(1)
 
     def _estimator(self, quantile: float) -> HistGradientBoostingRegressor:
         return HistGradientBoostingRegressor(
@@ -77,12 +96,16 @@ class QuantileForecaster:
             series = wide[column]
             features = series_features(series, step_seconds)
 
-            usable = series.notna() & features.notna().any(axis=1)
+            anchor = self._anchor(series)
+            usable = series.notna() & features.notna().any(axis=1) & anchor.notna()
             if clean is not None:
                 usable &= clean[column].fillna(False)
+                # The anchor is an observation too; if it sits inside a fault
+                # the "change" being learned is the fault's own onset.
+                usable &= clean[column].shift(1).astype("boolean").fillna(False).astype(bool)
 
             X = features.loc[usable].to_numpy(dtype=float)
-            y = series.loc[usable].to_numpy(dtype=float)
+            y = (series - anchor).loc[usable].to_numpy(dtype=float)
             if len(y) < 100:
                 raise ValueError(f"{column}: only {len(y)} clean rows to fit on")
 
@@ -100,12 +123,13 @@ class QuantileForecaster:
 
         per_quantile: dict[float, dict] = {q: {} for q in self.quantiles}
         for column in self.columns_:
-            features = series_features(wide[column], step_seconds)
+            series = wide[column]
+            features = series_features(series, step_seconds)
+            anchor = self._anchor(series)
             X = features.to_numpy(dtype=float)
             for quantile, model in self.models_[column].items():
-                per_quantile[quantile][column] = pd.Series(
-                    model.predict(X), index=wide.index
-                )
+                predicted = pd.Series(model.predict(X), index=wide.index)
+                per_quantile[quantile][column] = predicted + anchor
 
         frames = {}
         for quantile, columns in per_quantile.items():

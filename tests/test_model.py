@@ -31,8 +31,11 @@ def test_predicted_quantiles_land_in_order_after_repair():
     low = predicted[0.05].to_numpy()
     mid = predicted[0.5].to_numpy()
     high = predicted[0.95].to_numpy()
-    assert (low <= mid).all()
-    assert (mid <= high).all()
+    # The first row has no previous observation to anchor against.
+    anchored = np.isfinite(low) & np.isfinite(mid) & np.isfinite(high)
+    assert anchored.sum() > len(low) - 5
+    assert (low[anchored] <= mid[anchored]).all()
+    assert (mid[anchored] <= high[anchored]).all()
 
 
 def test_enforce_monotone_fixes_crossed_quantiles():
@@ -55,9 +58,10 @@ def test_the_interval_brackets_most_of_a_clean_series():
     held_out = frame.iloc[split:]
     predicted = enforce_monotone(fitted.predict(held_out, STEP))
 
-    inside = (held_out >= predicted[0.05]) & (held_out <= predicted[0.95])
+    inside = ((held_out >= predicted[0.05]) & (held_out <= predicted[0.95])).to_numpy()
+    usable = np.isfinite(predicted[0.05].to_numpy())
     # Nominal 90%; a short fit on a small sample will not be exact.
-    assert 0.75 < inside.to_numpy().mean() < 1.0
+    assert 0.75 < inside[usable].mean() < 1.0
 
 
 def test_training_through_an_incident_swallows_it():
