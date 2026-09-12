@@ -39,14 +39,14 @@ holds no matter how many series you watch.
 
 ## Where it is
 
-Phase 0 of 6 — the labelled data generator.
+Phase 2 of 6 — the forecaster.
 
 | Phase | | Status |
 |---|---|---|
 | 0 | Testbed and labelled fault data | ipr |
 | 0.5 | Containerised mesh with real faults | ipr |
 | 1 | Ingestion, storage, seasonal baselines | ipr |
-| 2 | Quantile forecasting and eval harness | |
+| 2 | Quantile forecasting and eval harness | ipr |
 | 3 | FDR control, extreme-value thresholds, changepoints | |
 | 4 | Trace topology and root-cause ranking | |
 | 5 | Triage agent under a token budget | |
@@ -87,6 +87,80 @@ by one hop-lag, so a cascade has a recoverable onset order. Latency and
 error rate travel upstream; CPU and memory do not. That asymmetry is the
 strongest localisation signal in the data, and the phase 4 ranker is meant
 to find it.
+
+## The forecaster
+
+Detection needs a *distribution* for the next point, not a number. A point
+forecast plus one global sigma is the assumption that fails hardest on
+latency, where the spread is wide, skewed, and moves with load. So the model
+predicts seven quantiles per series directly, and the interval becomes its
+own output rather than an afterthought.
+
+One gradient-boosted model per `(service, metric)` per quantile. Services
+differ by an order of magnitude in traffic and latency, and a shared model
+would spend its capacity learning that spread instead of either series'
+shape. Models are fit **only on rows labelled fault-free**: a forecaster
+trained through its own incidents learns to expect them, and the anomaly it
+was built to surface flattens into the baseline.
+
+```bash
+python -m anomaly_triage.detect.measure_forecast --data data/train-01
+```
+
+### Predict the change, not the level
+
+The first version predicted the value directly and lost — across all 60
+series it scored *worse* than a five-line exponential moving average.
+
+The cause is specific. A regression tree can only ever output a value it saw
+while training. Memory climbs steadily under a leak, so a level-predicting
+model walks off the end of its own training range at exactly the moment an
+incident begins. An exponential average follows a drift for free.
+
+Anchoring on the previous observation and predicting the *step* keeps the
+target stationary and hands extrapolation back to the anchor. On `mem_mb`
+and `latency_p95_ms` across three services, held out on the last 30% of a
+14-day run:
+
+```
+              pinball  cover90  cover98      KS   tail atoms
+  level        31.97    67.4%    74.3%    0.194   6.3% / 19.4%
+  change       20.15    85.7%    96.1%    0.032   1.9% /  2.0%
+```
+
+The KS column is the load-bearing one. Benjamini-Hochberg controls the false
+discovery rate only if p-values are uniform under the null, so a residual at
+KS 0.194 is not a p-value at all and every guarantee in phase 3 built on it
+would be decoration.
+
+### Against the baselines
+
+Median pinball loss on `postgres`, each metric scaled by its own spread so
+that `mem_mb` does not drown out `error_rate` — pooling them unscaled meant
+two of the five metrics contributed under 3% of the headline number:
+
+```
+  metric              forecaster    seasonal        ewma
+  cpu_pct                 0.0328      0.2262      0.0663
+  error_rate              0.1725      0.2155      0.1829
+  latency_p95_ms          0.3070      0.3914      0.3081
+  mem_mb                  0.0952      0.4656      0.1614
+  request_rate_rps        0.0287      0.2897      0.0522
+```
+
+Nominal 90% and 98% intervals covered 88.7% and 97.0% of clean points.
+
+Two honest caveats. These are one service; the full-fleet numbers for the
+corrected model have not been measured yet. And EWMA is a *strong* opponent
+here by construction — the healthy baseline is AR(1), and for an AR(1)
+process the optimal one-step forecast is an exponential smoother, so there
+may be little headroom on point accuracy by design. Feeding EWMA to the
+model as an input feature was tried and did not help.
+
+The claim worth making is not "more accurate". It is that EWMA emits a bare
+number carrying no notion of how surprised to be, and this emits a calibrated
+distribution — which is the only thing the FDR machinery in phase 3 can
+consume.
 
 ## The containerised mesh
 
@@ -141,6 +215,14 @@ anomaly_triage/sim/
   inject.py     propagation, attenuation, ground-truth labelling
   schedule.py   randomised schedules with a fault-free warm-up
   run.py        CLI producing a reproducible labelled run
+
+anomaly_triage/detect/
+  baseline.py   seasonal-naive, EWMA and the k-sigma rule it argues against
+  features.py   lag, rolling and calendar features, shifted so none can peek
+  model.py      per-series quantile forecaster on change-from-last
+  evaluate.py   pinball loss, interval coverage, PIT uniformity
+  measure_baseline.py  what threshold alerting costs on a healthy fleet
+  measure_forecast.py  the forecaster against the baselines, held out in time
 
 anomaly_triage/mesh/
   client.py     fault injection against the running containers
